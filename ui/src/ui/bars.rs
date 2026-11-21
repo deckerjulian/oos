@@ -8,15 +8,6 @@
 
 use super::*;
 
-/// The messages of the screen as it keeps them (ADR 0062).
-#[derive(Default)]
-pub(super) struct Notices {
-    /// the toast: its text and when it was shown (`Ui::now`)
-    pub toast: Option<(String, f64)>,
-    /// the info dialog: its lines
-    pub info: Option<Vec<String>>,
-}
-
 /// What `Ui::draw_aux_card` shows: the card's name and colour, on and selected, its value `big` and the line under it.
 struct AuxCard<'a> {
     name: &'a str,
@@ -286,7 +277,7 @@ impl Ui {
     /// Messages as an amber pill at the top centre of the plot; next to or under an open menu dialog that would
     /// cover it (it never hides dialog controls).
     pub(super) fn draw_toast(&self, cv: &mut Canvas) {
-        let Some((s, _)) = &self.notices.toast else { return };
+        let Some((s, _)) = &self.toast else { return };
         let f = self.fonts();
         let tw = f.mb.width(s) + 44;
         let body = self.frame().body;

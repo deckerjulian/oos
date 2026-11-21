@@ -220,7 +220,7 @@ mod tests {
         let mut u = opened(Item::ChScale(0));
         press(&mut u, &["0", "V"]);
         assert_eq!(u.m.ch[0].volts_per_div(), scale);
-        assert_eq!(u.notices.toast.as_ref().unwrap().0, "The scale must be above 0");
+        assert_eq!(u.toast.as_ref().unwrap().0, "The scale must be above 0");
     }
 
     /// A tap on the middle of a value row of a number opens the pad; of another value row it does not.

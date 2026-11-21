@@ -288,7 +288,7 @@ fn event_table_scrolls_and_goes_to_an_event() {
     let d0 = u.m.delay;
     u.tap(x, y);
     assert_eq!(u.m.delay, d0);
-    assert!(u.notices.toast.as_ref().is_some_and(|t| t.0.contains("Stop")));
+    assert!(u.toast.as_ref().is_some_and(|t| t.0.contains("Stop")));
     // stopped: the view goes there
     u.m.run = RunState::Stop;
     u.tap(x, y);
@@ -435,7 +435,7 @@ fn random_input_on(scr: Screen) {
         if u.wlan.osk.is_some() && next() % 3 == 0 {
             u.wlan.osk = None;
         }
-        u.notices.info = None;
+        u.dialog = None;
         u.power.open = false;
         u.power.action = None;
         if i % 200 == 0 {

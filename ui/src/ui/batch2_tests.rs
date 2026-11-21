@@ -139,7 +139,7 @@ fn sim_keeps_a_loaded_ref_and_every_channel() {
     assert_eq!(u.m.sim_slot, 1, "the SIM took the first free slot");
     assert!(u.refs[1].is_some() && u.session_is_sim);
     assert!(u.m.ch[0].on && u.m.ch[1].on, "the SIM does not turn channels off");
-    let toast = u.notices.toast.as_ref().map(|t| t.0.clone()).unwrap_or_default();
+    let toast = u.toast.as_ref().map(|t| t.0.clone()).unwrap_or_default();
     assert!(toast.ends_with("to R2"), "{toast}");
 }
 
@@ -153,7 +153,7 @@ fn sim_with_every_slot_full_says_which_ref_it_replaced() {
     u.m.sim_slot = 0;
     u.sim_play_set(true).unwrap();
     u.wait_sim_generation();
-    let toast = u.notices.toast.as_ref().map(|t| t.0.clone()).unwrap_or_default();
+    let toast = u.toast.as_ref().map(|t| t.0.clone()).unwrap_or_default();
     assert!(toast.contains("to R1, replacing file0.csv"), "{toast}");
 }
 

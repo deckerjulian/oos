@@ -223,8 +223,8 @@ impl Ui {
         if self.wlan.osk.is_some() {
             return self.osk_key(k);
         }
-        if self.notices.info.is_some() {
-            self.notices.info = None;
+        if self.dialog.is_some() {
+            self.dialog = None;
             return;
         }
         if self.record_key(k) {
@@ -310,7 +310,7 @@ impl Ui {
         self.panel_tx.push(crate::board::PanelCmd::CancelPowerDown);
         self.power.open = !self.power.open;
         if self.power.open {
-            self.notices.info = None;
+            self.dialog = None;
             self.close_menu();
         }
     }
@@ -533,11 +533,8 @@ impl Ui {
             return;
         }
         let map = self.zoom_drag_map(self.touch.x, self.touch.y);
-        let modal = self.load_slot_ask
-            || self.menu_open
-            || self.notices.info.is_some()
-            || self.power.open
-            || self.wlan.osk.is_some();
+        let modal =
+            self.load_slot_ask || self.menu_open || self.dialog.is_some() || self.power.open || self.wlan.osk.is_some();
         let p = &mut self.input.pinch;
         if id == 1 {
             match ph {
@@ -666,7 +663,7 @@ impl Ui {
         // a finger on a list that scrolls (the measurement page, the Results pane, a table) moves it
         let grip = if ph == Phase::Down
             && !self.m.touch_lock
-            && self.notices.info.is_none()
+            && self.dialog.is_none()
             && !self.power.open
             && self.wlan.osk.is_none()
         {
@@ -701,7 +698,7 @@ impl Ui {
             start_cur: 0.0,
             win: self.plot.cur_win,
         };
-        if self.m.touch_lock || self.notices.info.is_some() || self.power.open || self.wlan.osk.is_some() {
+        if self.m.touch_lock || self.dialog.is_some() || self.power.open || self.wlan.osk.is_some() {
             return;
         }
         if let Some((l, g)) = grip {
@@ -1036,8 +1033,8 @@ impl Ui {
             self.finish_zoom_box();
             return;
         }
-        if self.notices.info.is_some() {
-            self.notices.info = None;
+        if self.dialog.is_some() {
+            self.dialog = None;
             return;
         }
         if self.m.touch_lock {
@@ -1232,8 +1229,8 @@ impl Ui {
         if self.meas_cfg_tap(x, y) {
             return;
         }
-        if self.notices.info.is_some() {
-            self.notices.info = None;
+        if self.dialog.is_some() {
+            self.dialog = None;
             return;
         }
         if self.tap_menu(x, y) {

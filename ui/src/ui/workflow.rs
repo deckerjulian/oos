@@ -716,7 +716,7 @@ impl Ui {
         self.load_destination = None;
         self.load_slot_ask = true;
         self.power.open = false;
-        self.notices.info = None;
+        self.dialog = None;
         self.cancel_pointer();
     }
 

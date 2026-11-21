@@ -1047,7 +1047,7 @@ mod tests {
         let ok = o.keys().into_iter().find(|(_, k)| *k == Key::Ok).unwrap().0;
         ui.tap(ok.x + 5, ok.y + 5);
         assert!(ui.wlan.osk.is_some());
-        assert!(ui.notices.toast.as_ref().is_some_and(|t| t.0.contains("8 to 63")));
+        assert!(ui.toast.as_ref().is_some_and(|t| t.0.contains("8 to 63")));
     }
 
     #[test]
@@ -1179,7 +1179,7 @@ mod tests {
         // not supported: says so
         ui.wlan_pick(2);
         assert!(ui.wlan.osk.is_none());
-        assert!(ui.notices.toast.as_ref().is_some_and(|t| t.0.contains("WPA3")));
+        assert!(ui.toast.as_ref().is_some_and(|t| t.0.contains("WPA3")));
         // a hidden network: name first, then the password
         ui.wlan_pick(4);
         assert_eq!(ui.wlan.osk.as_ref().unwrap().what, OskFor::Name);
@@ -1282,7 +1282,7 @@ mod tests {
                 0 => ui.key([0xba, 0xbb, 0xbc, 0xaa, 0xab, 0xac, 0x0f, 0x08][next() as usize % 8]),
                 _ => ui.tap((next() % PANEL_W as u64) as i32, (next() % PANEL_H as u64) as i32),
             }
-            ui.notices.info = None;
+            ui.dialog = None;
             ui.power.open = false;
             if i % 500 == 0 {
                 ui.render(&mut cv);

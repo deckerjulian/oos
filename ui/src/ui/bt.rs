@@ -271,14 +271,14 @@ impl Ui {
             Report::Prompt(Prompt::Done) => {
                 self.bt.prompt = None;
                 if let Some(lines) = self.bt.prompt_lines.take() {
-                    if self.notices.info.as_ref() == Some(&lines) {
-                        self.notices.info = None;
+                    if self.dialog.as_ref() == Some(&lines) {
+                        self.dialog = None;
                     }
                 }
             }
             Report::Prompt(p) => {
                 let lines = self.bt_prompt_lines(&p);
-                self.notices.info = Some(lines.clone());
+                self.dialog = Some(lines.clone());
                 self.bt.prompt_lines = Some(lines);
                 self.bt.prompt = Some(p);
             }
@@ -385,7 +385,7 @@ impl Ui {
                     self.open_picker(if it == Item::BtPaired { Item::BtPairedPick } else { Item::BtForgetPick });
                 }
             }
-            Item::BtInfo => self.notices.info = Some(self.bt_lines()),
+            Item::BtInfo => self.dialog = Some(self.bt_lines()),
             _ => return false,
         }
         true
@@ -569,10 +569,10 @@ mod tests {
             passkey: 4321,
             entered: 0,
         }));
-        assert_eq!(u.notices.info.as_ref().unwrap()[1], "Type 004321 on it, then Enter");
-        assert!(u.notices.info.as_ref().unwrap()[0].contains("Keys"));
+        assert_eq!(u.dialog.as_ref().unwrap()[1], "Type 004321 on it, then Enter");
+        assert!(u.dialog.as_ref().unwrap()[0].contains("Keys"));
         u.bt_report(Report::Prompt(Prompt::Done));
-        assert!(u.notices.info.is_none() && u.bt.prompt.is_none());
+        assert!(u.dialog.is_none() && u.bt.prompt.is_none());
     }
 
     /// Every Pair job ends with Done, with a prompt or without: it closes the passkey dialog only, not one the user
@@ -581,14 +581,14 @@ mod tests {
     fn the_end_of_a_pairing_closes_only_its_own_dialog() {
         let mut u = with_devices();
         u.bt_activate(Item::BtInfo);
-        let info = u.notices.info.clone();
+        let info = u.dialog.clone();
         assert!(info.is_some());
         u.bt_report(Report::Prompt(Prompt::Done));
-        assert_eq!(u.notices.info, info, "a pairing without a prompt leaves the details open");
+        assert_eq!(u.dialog, info, "a pairing without a prompt leaves the details open");
         u.bt_report(Report::Prompt(Prompt::Pin { device: "/org/bluez/hci0/dev_Keys".into(), pin: "0000".into() }));
         u.bt_activate(Item::BtInfo);
         u.bt_report(Report::Prompt(Prompt::Done));
-        assert_eq!(u.notices.info, info, "the details opened over the PIN stay");
+        assert_eq!(u.dialog, info, "the details opened over the PIN stay");
         assert!(u.bt.prompt.is_none());
     }
 

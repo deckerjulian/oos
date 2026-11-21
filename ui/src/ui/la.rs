@@ -725,7 +725,7 @@ mod decode_tests {
         let (x, y) = fix_tests::row_xy(&ui, "Logic analyser");
         ui.tap(x, y); // Sources > Logic analyser.
         assert!(!ui.m.la.on && !ui.menu_open);
-        assert!(ui.notices.toast.as_ref().is_some_and(|t| t.0.contains("No LA probe")));
+        assert!(ui.toast.as_ref().is_some_and(|t| t.0.contains("No LA probe")));
         ui.key(key::LA);
         assert!(!ui.m.la.on && !ui.menu_open);
         ui.open_menu(MenuId::Main);
@@ -739,7 +739,7 @@ mod decode_tests {
         // pulled while on
         ui.la_probe_set(Some(false));
         assert!(!ui.m.la.on);
-        assert!(ui.notices.toast.as_ref().is_some_and(|t| t.0.contains("LA off")));
+        assert!(ui.toast.as_ref().is_some_and(|t| t.0.contains("LA off")));
         // SCPI stays the way out, nothing switches it off again
         ui.m.la.on = true;
         ui.la_probe_set(Some(false));

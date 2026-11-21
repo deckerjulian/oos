@@ -58,13 +58,13 @@ impl Ui {
         let panel = std::mem::replace(&mut self.m, m);
         // the monitor's top bar marks its own view; the panel's notes stay on the panel
         self.m.view_cur = j;
-        let toast = self.notices.toast.take();
+        let toast = self.toast.take();
         let keep = (self.xy, self.full.on, self.results.on);
         (self.xy, self.full.on, self.results.on) = (xy, full, stats);
         let r = f(self);
         self.m = panel;
         (self.xy, self.full.on, self.results.on) = keep;
-        self.notices.toast = toast;
+        self.toast = toast;
         Some(r)
     }
 

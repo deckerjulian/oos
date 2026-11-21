@@ -599,7 +599,7 @@ impl Ui {
         }
         if self.load_slot_ask
             || self.menu_open
-            || self.notices.info.is_some()
+            || self.dialog.is_some()
             || self.power.open
             || self.m.touch_lock
             || self.view_on()

@@ -505,7 +505,7 @@ fn hardware_segments_record_in_the_thread_and_browse_on_demand() {
     }
     ui.step(0.02);
     assert_eq!(ui.m.run, RunState::Stop);
-    assert_eq!(ui.notices.toast.as_ref().unwrap().0, "100 segments recorded");
+    assert_eq!(ui.toast.as_ref().unwrap().0, "100 segments recorded");
     // browse: back from the newest asks the thread for segment 99, then 98
     ui.history_step(-1);
     assert_eq!(shared.lock().unwrap().seg.want, Some(98));

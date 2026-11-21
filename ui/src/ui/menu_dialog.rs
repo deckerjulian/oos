@@ -65,7 +65,7 @@ impl Ui {
             || t.held
             || self.m.touch_lock
             || self.full_on()
-            || self.notices.info.is_some()
+            || self.dialog.is_some()
             || self.power.open
             || self.wlan.osk.is_some()
         {
@@ -870,9 +870,9 @@ impl Ui {
                 cv.text_in(&f.mb, b, 1, t, c);
             }
         }
-        if self.notices.info.is_some() && self.sysinfo.rows.is_some() {
+        if self.dialog.is_some() && self.sysinfo.rows.is_some() {
             self.draw_sysinfo(cv);
-        } else if let Some(lines) = &self.notices.info {
+        } else if let Some(lines) = &self.dialog {
             let scr = self.scr.rect();
             cv.blend(scr, rgb(0, 0, 0), 140);
             // taller for long texts (About with experimental limits)

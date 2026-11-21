@@ -244,7 +244,7 @@ impl Ui {
                 let mut d = vec![format!("{} {}", what, if st.success() { "done" } else { "FAILED" })];
                 d.extend(wrap_lines(&out, 44).into_iter().rev().take(9).collect::<Vec<_>>().into_iter().rev());
                 d.push("Tap to close".into());
-                self.notices.info = Some(d);
+                self.dialog = Some(d);
                 if what == "Install" {
                     let _ = std::fs::remove_file(UPLOAD);
                 }
@@ -255,12 +255,12 @@ impl Ui {
             std::fs::read_to_string(NOTICE).map_err(|_| ()).and_then(|n| if cfg!(test) { Err(()) } else { Ok(n) })
         {
             let n = n.trim().to_string();
-            if !n.is_empty() && n != self.upd.notice_shown && self.notices.info.is_none() && !self.start_up_active() {
+            if !n.is_empty() && n != self.upd.notice_shown && self.dialog.is_none() && !self.start_up_active() {
                 self.upd.notice_shown = n.clone();
                 let mut d = vec!["Update".to_string()];
                 d.extend(wrap_lines(&n, 44));
                 d.push("Tap to close".into());
-                self.notices.info = Some(d);
+                self.dialog = Some(d);
             }
         }
     }
@@ -368,11 +368,11 @@ mod tests {
         assert!(matches!(Ui::kind(Item::BootAgain), Kind::Action));
         u.boot_again_tap();
         assert!(u.upd.job.is_none(), "one tap writes nothing");
-        assert!(u.notices.toast.as_ref().unwrap().0.starts_with("Tap again"), "{:?}", u.notices.toast);
+        assert!(u.toast.as_ref().unwrap().0.starts_with("Tap again"), "{:?}", u.toast);
         // the second tap only after the first has run out: asks again
         u.now += 6.0;
         u.boot_again_tap();
-        assert!(u.upd.job.is_none() && u.notices.toast.as_ref().unwrap().0.starts_with("Tap again"));
+        assert!(u.upd.job.is_none() && u.toast.as_ref().unwrap().0.starts_with("Tap again"));
     }
 
     #[test]

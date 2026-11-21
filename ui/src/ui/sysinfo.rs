@@ -110,12 +110,12 @@ impl Ui {
         self.sysinfo.rows = Some(self.sysinfo_rows());
         self.sysinfo.t = self.now;
         // the dialog marker: every path that closes a dialog (tap, key) closes the page too
-        self.notices.info = Some(Vec::new());
+        self.dialog = Some(Vec::new());
     }
 
     /// Per frame: refresh once a second while open; forget the page once its dialog was closed.
     pub(super) fn sysinfo_poll(&mut self) {
-        if self.notices.info.is_none() {
+        if self.dialog.is_none() {
             self.sysinfo.rows = None;
         } else if self.sysinfo.rows.is_some() && self.now - self.sysinfo.t >= 1.0 {
             self.sysinfo.rows = Some(self.sysinfo_rows());
@@ -387,7 +387,7 @@ mod tests {
     fn opens_refreshes_and_closes_like_a_dialog() {
         let mut ui = crate::ui::testkit::demo_ui();
         ui.activate(Item::SysInfo);
-        assert!(ui.sysinfo.rows.is_some() && ui.notices.info.is_some());
+        assert!(ui.sysinfo.rows.is_some() && ui.dialog.is_some());
         let rows = ui.sysinfo.rows.as_ref().unwrap();
         // unit, temperatures, limits; the default platform is the DHO924S with the standard limits
         assert!(rows.iter().all(|c| !c.is_empty()));
@@ -400,7 +400,7 @@ mod tests {
         // any key closes it; the next frame forgets the rows
         ui.key(key::RUNSTOP);
         ui.step(0.02);
-        assert!(ui.notices.info.is_none() && ui.sysinfo.rows.is_none());
+        assert!(ui.dialog.is_none() && ui.sysinfo.rows.is_none());
     }
 
     #[test]

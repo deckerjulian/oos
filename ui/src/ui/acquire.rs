@@ -731,9 +731,9 @@ impl Ui {
             self.grade.vmaxz.iter_mut().for_each(|v| *v = (*v / 2).max(1));
             self.grade.vmaxz_cg = (self.grade.vmaxz_cg / 2).max(1);
         }
-        if let Some((_, t)) = &self.notices.toast {
+        if let Some((_, t)) = &self.toast {
             if self.now > *t {
-                self.notices.toast = None;
+                self.toast = None;
             }
         }
     }

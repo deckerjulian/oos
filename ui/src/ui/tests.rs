@@ -605,7 +605,7 @@ fn protocol_watch_names_a_new_bus() {
     let mut named = String::new();
     for _ in 0..80 {
         ui.step(0.05);
-        if let Some((t, _)) = &ui.notices.toast {
+        if let Some((t, _)) = &ui.toast {
             if t.starts_with("Protocol watch") {
                 named = t.clone();
                 break;
@@ -1038,7 +1038,7 @@ fn storage_save_and_recall() {
     assert_eq!(ui.m, want);
     ui.files.slot = 2;
     ui.activate(Item::StoreRecall);
-    assert!(ui.notices.toast.as_ref().unwrap().0.starts_with("Recall failed"));
+    assert!(ui.toast.as_ref().unwrap().0.starts_with("Recall failed"));
     let _ = std::fs::remove_dir_all(&dir);
 }
 

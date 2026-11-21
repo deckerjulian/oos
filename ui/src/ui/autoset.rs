@@ -952,14 +952,14 @@ mod tests {
         assert!((5.0 / vpd) > 2.0 && (5.0 / vpd) <= 8.0, "5 V over {} div", 5.0 / vpd);
         assert!((ui.m.trig_level - 2.5).abs() < 0.3, "level {}", ui.m.trig_level);
         assert_eq!(ui.m.trig_src, 0);
-        assert!(ui.notices.toast.as_ref().is_some_and(|t| t.0.contains("no steady period")));
+        assert!(ui.toast.as_ref().is_some_and(|t| t.0.contains("no steady period")));
         assert!(!ui.auto_bar_on());
         // a flat input is still no signal: the set-up stays
         let mut ui = crate::ui::testkit::demo_ui();
         let back = ui.m.clone();
         run_hw_of(&mut ui, &|_| 0.004);
         assert_eq!(ui.m.ch[0], back.ch[0]);
-        assert!(ui.notices.toast.as_ref().is_some_and(|t| t.0.contains("no signal")));
+        assert!(ui.toast.as_ref().is_some_and(|t| t.0.contains("no signal")));
     }
 
     // Break it catches: the opt-in noise reject left off on a signal whose noise exceeds the hysteresis (it then
@@ -1231,7 +1231,7 @@ mod tests {
         ui.auto_start();
         assert_eq!(ui.m, before);
         assert!(!ui.auto_running());
-        assert!(ui.notices.toast.as_ref().unwrap().0.contains("Autoset needs a live channel; use Fit record"));
+        assert!(ui.toast.as_ref().unwrap().0.contains("Autoset needs a live channel; use Fit record"));
     }
 
     #[test]
@@ -1282,7 +1282,7 @@ mod tests {
                 .collect::<Vec<_>>()
         );
         assert!(!ui.auto_running());
-        assert!(ui.notices.toast.as_ref().unwrap().0.contains("Autoset needs a live channel; use Fit record"));
+        assert!(ui.toast.as_ref().unwrap().0.contains("Autoset needs a live channel; use Fit record"));
         assert!(ui.m.ch.iter().all(|c| !c.on));
         assert_eq!(ui.m.run, RunState::Stop);
         assert_eq!((ui.m.trig_src, ui.m.trig_level), (2, 9.0));
@@ -1318,7 +1318,7 @@ mod tests {
         let r = ui.refs[4].as_ref().unwrap();
         assert_eq!((r.v.as_ptr(), r.v.len(), r.dt, r.t0, r.vpd, r.offset), source);
         assert_eq!(ui.replay.captures, captures);
-        assert!(ui.notices.toast.as_ref().unwrap().0.contains("Autoset needs a live channel; use Fit record"));
+        assert!(ui.toast.as_ref().unwrap().0.contains("Autoset needs a live channel; use Fit record"));
         assert!(ui.sim_play && ui.m.run == RunState::Run);
         assert_eq!(ui.m.ch.iter().map(|c| (c.on, c.vscale, c.offset)).collect::<Vec<_>>(), ch);
         assert_eq!((ui.m.trig_src, ui.m.trig_level), (2, 9.0));

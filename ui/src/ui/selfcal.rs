@@ -160,7 +160,7 @@ impl Ui {
                     self.toast("Self-cal started");
                 } else {
                     self.cal.armed = Some(self.now);
-                    self.notices.info = Some(vec![
+                    self.dialog = Some(vec![
                         "Self-calibration".into(),
                         "Disconnect ALL inputs (no probes, no cables).".into(),
                         Self::cal_warmup(

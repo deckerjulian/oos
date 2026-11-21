@@ -333,7 +333,7 @@ mod arb_tests {
         // above the limit of the wave: the limit, with a message
         type_in(&mut ui, &["9", "9", "9", "MHz"]);
         assert_eq!(ui.m.afg_freq, ui.m.gen_max_hz());
-        assert!(ui.notices.toast.as_ref().is_some_and(|t| t.0.contains("Highest")));
+        assert!(ui.toast.as_ref().is_some_and(|t| t.0.contains("Highest")));
         // a ramp has a lower limit than a sine
         ui.m.afg_wave = 2;
         type_in(&mut ui, &["2", "0", "MHz"]);

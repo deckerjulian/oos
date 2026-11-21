@@ -11,7 +11,7 @@ use std::{
 fn output(ui: &mut Ui, name: &str) {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../local/ref-integration/actual-backend");
     std::fs::create_dir_all(&dir).unwrap();
-    ui.notices.toast = None;
+    ui.toast = None;
     let mut canvas = Canvas::new(W, H);
     ui.render(&mut canvas);
     crate::store::write(&dir.join(name), &crate::store::png_of(&canvas)).unwrap();

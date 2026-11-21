@@ -149,8 +149,8 @@ impl Ui {
 
     pub(super) fn ssh_activate(&mut self, it: Item) -> bool {
         match it {
-            Item::SshShowPass => self.notices.info = Some(self.ssh_password_lines()),
-            Item::SshKeyList => self.notices.info = Some(self.ssh_key_lines()),
+            Item::SshShowPass => self.dialog = Some(self.ssh_password_lines()),
+            Item::SshKeyList => self.dialog = Some(self.ssh_key_lines()),
             Item::SshImport => self.ssh_import(),
             Item::SshRemove => {
                 if self.ssh.keys.is_empty() {
@@ -276,24 +276,24 @@ mod tests {
         assert_eq!(u.value(Item::SshKeys), "none");
         u.select_option(Item::SshPassword, "Off");
         assert!(u.sys.ssh_password, "no key: password login must stay on");
-        assert!(u.notices.toast.as_ref().unwrap().0.contains("locks root out"));
+        assert!(u.toast.as_ref().unwrap().0.contains("locks root out"));
         // a key from the stick, then it may go off
         u.stick.mounted = true;
         std::fs::write(d.join("usb").join("id_ed25519.pub"), ED).unwrap();
         u.activate(Item::SshImport);
-        assert_eq!(u.notices.toast.as_ref().unwrap().0, "1 key added");
+        assert_eq!(u.toast.as_ref().unwrap().0, "1 key added");
         assert_eq!(u.value(Item::SshKeys), "1");
         u.select_option(Item::SshPassword, "Off");
         assert!(!u.sys.ssh_password);
         // the last key cannot go while password login is off
         u.activate(Item::SshRemove);
-        assert!(u.pick.is_none() && u.notices.toast.as_ref().unwrap().0.contains("lock root out"));
+        assert!(u.pick.is_none() && u.toast.as_ref().unwrap().0.contains("lock root out"));
         u.select_option(Item::SshPassword, "On");
         u.activate(Item::SshRemove);
         assert_eq!(u.pick.map(|p| p.it), Some(Item::SshRemoveKey));
         assert!(u.options(Item::SshRemoveKey)[0].starts_with("ed25519 tester@host SHA256:"));
         u.activate(Item::PickOpt(0));
-        assert_eq!(u.notices.toast.as_ref().unwrap().0, "Removed tester@host");
+        assert_eq!(u.toast.as_ref().unwrap().0, "Removed tester@host");
         assert_eq!(u.value(Item::SshKeys), "none");
         std::fs::remove_dir_all(&d).unwrap();
     }
@@ -302,14 +302,14 @@ mod tests {
     fn import_needs_a_stick_and_a_key_file() {
         let (mut u, d) = with_dir("import");
         u.activate(Item::SshImport);
-        assert_eq!(u.notices.toast.as_ref().unwrap().0, "No USB stick in the front port");
+        assert_eq!(u.toast.as_ref().unwrap().0, "No USB stick in the front port");
         u.stick.mounted = true;
         u.activate(Item::SshImport);
-        assert!(u.notices.toast.as_ref().unwrap().0.starts_with("No *.pub"));
+        assert!(u.toast.as_ref().unwrap().0.starts_with("No *.pub"));
         std::fs::write(d.join("usb").join("id_ed25519"), "-----BEGIN OPENSSH PRIVATE KEY-----\n").unwrap();
         std::fs::write(d.join("usb").join("bad.pub"), "-----BEGIN OPENSSH PRIVATE KEY-----\n").unwrap();
         u.activate(Item::SshImport);
-        assert_eq!(u.notices.toast.as_ref().unwrap().0, "0 keys added, 1 not taken (a private key, not a public one)");
+        assert_eq!(u.toast.as_ref().unwrap().0, "0 keys added, 1 not taken (a private key, not a public one)");
         assert!(!d.join("ssh").join("authorized_keys").exists(), "nothing written when nothing was added");
         std::fs::remove_dir_all(&d).unwrap();
     }
@@ -325,7 +325,7 @@ mod tests {
             assert!(!u.value(r.it).contains("abcd"), "{:?} shows the password", r.it);
         }
         u.activate(Item::SshShowPass);
-        let lines = u.notices.info.clone().unwrap();
+        let lines = u.dialog.clone().unwrap();
         assert_eq!(lines[1], "ssh root@192.0.2.10");
         assert_eq!(lines[2], "Password  abcd-efgh-jkmn-pqrs");
         std::fs::remove_dir_all(&d).unwrap();

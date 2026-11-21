@@ -68,7 +68,7 @@ fn a_reference_travels_through_a_file() {
     u.activate(Item::RefExport);
     u.ref_sel = 4;
     u.activate(Item::RefExport);
-    assert!(u.notices.toast.as_ref().is_some_and(|t| t.0.contains("empty")));
+    assert!(u.toast.as_ref().is_some_and(|t| t.0.contains("empty")));
     std::fs::rename(dir.join("ref1.csv"), dir.join("ref5.csv")).unwrap();
     u.activate(Item::RefImport);
     let r = u.refs[4].as_ref().unwrap();
@@ -84,7 +84,7 @@ fn a_reference_travels_through_a_file() {
     // a file that is not one
     std::fs::write(dir.join("ref5.csv"), "nothing here\n").unwrap();
     u.activate(Item::RefImport);
-    assert!(u.notices.toast.as_ref().is_some_and(|t| t.0.contains("no waveform")));
+    assert!(u.toast.as_ref().is_some_and(|t| t.0.contains("no waveform")));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
