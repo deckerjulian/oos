@@ -44,7 +44,7 @@ fn snapshot_of(m: &Model, xy: bool, full: bool) -> String {
 impl Ui {
     /// What the shown view is now.
     pub(super) fn view_snapshot(&self) -> String {
-        snapshot_of(&self.m, self.xy, self.full)
+        snapshot_of(&self.m, self.xy, self.full.on)
     }
 
     /// Shows a kept view (empty: the plot alone, as after a reset).
@@ -61,7 +61,7 @@ impl Ui {
             let (k, v) = (k.trim(), v.trim());
             match k {
                 "xy" => self.xy = v == "true",
-                "full" => self.full = v == "true",
+                "full" => self.full.on = v == "true",
                 _ if KEYS.contains(&k) => {
                     if let Err(e) = store::set(&mut self.m, k, v) {
                         eprintln!("oos-ui: view: {}: {}", k, e);

@@ -24,6 +24,17 @@ pub struct Hdmi {
     pub out: Option<(u32, u32)>,
 }
 
+/// Full density on the panel (ADR 0062).
+#[derive(Default)]
+pub(super) struct Full {
+    /// the plot covers the top bar and the cards. Stays off while the external display shows the waveform, so the
+    /// panel keeps the controls, unless the expand button asked for it (`asked`).
+    pub on: bool,
+    /// Full came from a tap on the expand button: the panel enlarges its plot even while the external display shows
+    /// the waveform. Full chosen under Density, a display plugged in, or leaving Full clears it.
+    pub asked: bool,
+}
+
 const CH_NAMES: [&str; 4] = ["CH1", "CH2", "CH3", "CH4"];
 const REF_NAMES: [&str; NREF] = ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10"];
 const MATH_NAMES: [&str; 8] = ["M1", "M2", "M3", "M4", "M5", "M6", "M7", "M8"];
@@ -51,7 +62,7 @@ impl Ui {
     pub(super) fn toggle_expand(&mut self) {
         self.m.density = if self.m.density == Density::Full { Density::Scope } else { Density::Full };
         // a tap asks for the panel itself, also while the external display shows the waveform
-        self.full_asked = self.m.density == Density::Full;
+        self.full.asked = self.m.density == Density::Full;
         self.apply_density();
     }
 
@@ -95,12 +106,12 @@ impl Ui {
     /// Panel bars hide for Full while the external display copies the panel, or when the expand button asked for it.
     pub(crate) fn sync_full(&mut self) {
         if self.m.density != Density::Full {
-            self.full_asked = false;
+            self.full.asked = false;
         }
         // waveform on an external display keeps the panel's bars unless the button asked; with no display attached
         // Full enlarges the panel
         let external = self.m.hdmi != HdmiMode::Mirror && self.hdmi.present;
-        self.full = self.m.density == Density::Full && (!external || self.full_asked);
+        self.full.on = self.m.density == Density::Full && (!external || self.full.asked);
     }
 
     /// Called when an external display comes or goes, so Full follows it.
@@ -109,7 +120,7 @@ impl Ui {
             self.hdmi.present = present;
             // a display plugged in takes the waveform; the panel keeps its bars until the button is tapped again
             if present {
-                self.full_asked = false;
+                self.full.asked = false;
             }
             self.sync_full();
         }
@@ -162,7 +173,7 @@ impl Ui {
                 let all = Density::ALL;
                 let i = all.iter().position(|&l| l == self.m.density).unwrap_or(0);
                 self.m.density = all[cycle(i, all.len(), d)];
-                self.full_asked = false;
+                self.full.asked = false;
                 self.apply_density();
             }
             Item::WinCh(c) => self.m.ch_win[c] = cycle(self.m.ch_win[c].min(n - 1), n, d),
@@ -199,10 +210,10 @@ mod tests {
         for l in WinLayout::ALL {
             u.m.win_layout = l;
             render(&mut u);
-            assert_eq!(u.wins.len(), l.count(), "{:?}", l);
+            assert_eq!(u.plot.wins.len(), l.count(), "{:?}", l);
             let g = u.grid;
-            for (i, a) in u.wins.iter().enumerate() {
-                assert_eq!((a.w, a.h), (u.wins[0].w, u.wins[0].h), "{:?}", l);
+            for (i, a) in u.plot.wins.iter().enumerate() {
+                assert_eq!((a.w, a.h), (u.plot.wins[0].w, u.plot.wins[0].h), "{:?}", l);
                 assert!(
                     a.x >= g.x && a.y >= g.y && a.x + a.w <= g.x + g.w && a.y + a.h <= g.y + g.h,
                     "{:?} {:?}",
@@ -210,12 +221,12 @@ mod tests {
                     a
                 );
                 assert_eq!(a.h % 8, 0, "{:?}", l);
-                for b in &u.wins[i + 1..] {
+                for b in &u.plot.wins[i + 1..] {
                     assert!(!overlaps(*a, *b), "{:?}", l);
                 }
             }
             // one phosphor map per channel at the size of a window
-            assert_eq!((u.ph.w, u.ph.h), (u.wins[0].w as usize, u.wins[0].h as usize));
+            assert_eq!((u.ph.w, u.ph.h), (u.plot.wins[0].w as usize, u.plot.wins[0].h as usize));
         }
     }
 
@@ -228,7 +239,7 @@ mod tests {
         assert_eq!(&u.m.ch_win[..n_ch()], &(0..n_ch()).map(|c| c % 2).collect::<Vec<_>>()[..]);
         render(&mut u);
         // a channel's volts map into its own window; Split stacks them
-        let (a, b) = (u.wins[0], u.wins[1]);
+        let (a, b) = (u.plot.wins[0], u.plot.wins[1]);
         assert!(b.y >= a.y + a.h);
         assert_eq!(u.ch_area(0), a);
         assert_eq!(u.ch_area(1), b);
@@ -241,7 +252,7 @@ mod tests {
         // back to one window: everything in it, whatever the per-channel choice says
         u.select_option(Item::WinLayout, "Scope");
         render(&mut u);
-        assert_eq!(u.wins.len(), 1);
+        assert_eq!(u.plot.wins.len(), 1);
         assert!((0..n_ch()).all(|c| u.ch_area(c) == u.area));
     }
 
@@ -251,10 +262,10 @@ mod tests {
         u.m.win_layout = WinLayout::Quad;
         u.m.zoom = true;
         render(&mut u);
-        assert_eq!(u.wins.len(), 1);
+        assert_eq!(u.plot.wins.len(), 1);
         u.m.zoom = false;
         render(&mut u);
-        assert_eq!(u.wins.len(), 4);
+        assert_eq!(u.plot.wins.len(), 4);
     }
 
     #[test]
@@ -284,7 +295,7 @@ mod tests {
         let (_, hit) = u.full_btn();
         u.tap(hit.x + hit.w / 2, hit.y + hit.h / 2);
         assert_eq!(u.m.density, Density::Full);
-        assert!(u.full);
+        assert!(u.full.on);
         render(&mut u);
         assert!(u.grid.y < normal.y && u.grid.h > normal.h, "{:?} {:?}", u.grid, normal);
         // the cards are gone: a tap where CH1's card was opens nothing
@@ -294,7 +305,7 @@ mod tests {
         let (_, hit) = u.full_btn();
         u.tap(hit.x + hit.w / 2, hit.y + hit.h / 2);
         assert_eq!(u.m.density, Density::Scope);
-        assert!(!u.full);
+        assert!(!u.full.on);
         render(&mut u);
         assert_eq!(u.grid, normal);
         // the touch lock needs the Menu button: no full screen while it is on
@@ -322,17 +333,17 @@ mod tests {
         render(&mut u);
         let normal = u.grid;
         press(&mut u);
-        assert!(u.full && u.grid.h > normal.h, "Full must enlarge the plot: {:?} {:?}", u.grid, normal);
+        assert!(u.full.on && u.grid.h > normal.h, "Full must enlarge the plot: {:?} {:?}", u.grid, normal);
         press(&mut u);
-        assert_eq!((u.m.density, u.full, u.grid), (Density::Scope, false, normal));
+        assert_eq!((u.m.density, u.full.on, u.grid), (Density::Scope, false, normal));
         // a display attached while Full: the panel keeps its bars, the external display shows the waveform
         press(&mut u);
         u.set_hdmi_present(true);
         render(&mut u);
-        assert!(!u.full && u.grid == normal);
+        assert!(!u.full.on && u.grid == normal);
         u.set_hdmi_present(false);
         render(&mut u);
-        assert!(u.full && u.grid.h > normal.h);
+        assert!(u.full.on && u.grid.h > normal.h);
     }
 
     #[test]
@@ -350,21 +361,26 @@ mod tests {
                 render(u);
             };
             tap(&mut u);
-            assert!(u.full && u.grid.h > normal.h, "{mode}: the tap must enlarge the panel: {:?} {:?}", u.grid, normal);
+            assert!(
+                u.full.on && u.grid.h > normal.h,
+                "{mode}: the tap must enlarge the panel: {:?} {:?}",
+                u.grid,
+                normal
+            );
             tap(&mut u);
-            assert_eq!((u.m.density, u.full, u.grid), (Density::Scope, false, normal), "{mode}");
+            assert_eq!((u.m.density, u.full.on, u.grid), (Density::Scope, false, normal), "{mode}");
             // Full chosen under Density keeps the panel's bars: the external display has the waveform
             u.select_option(Item::WinLayout, "Full");
             render(&mut u);
-            assert!(u.m.density == Density::Full && !u.full && u.grid == normal, "{mode}");
+            assert!(u.m.density == Density::Full && !u.full.on && u.grid == normal, "{mode}");
             // and a display plugged in after a tap takes the waveform back
             u.select_option(Item::WinLayout, "Scope");
             tap(&mut u);
-            assert!(u.full, "{mode}");
+            assert!(u.full.on, "{mode}");
             u.set_hdmi_present(false);
             u.set_hdmi_present(true);
             render(&mut u);
-            assert!(!u.full && u.grid == normal, "{mode}");
+            assert!(!u.full.on && u.grid == normal, "{mode}");
         }
     }
 
@@ -379,7 +395,7 @@ mod tests {
         u.select_option(Item::WinRef(0), "3");
         assert_eq!(u.value(Item::WinRef(0)), "3");
         render(&mut u);
-        assert_eq!(u.source_area(WaveId::Ref(0)), Some(u.wins[2]));
+        assert_eq!(u.source_area(WaveId::Ref(0)), Some(u.plot.wins[2]));
     }
 
     #[test]
@@ -431,15 +447,20 @@ mod tests {
         assert_eq!(u.options(Item::WinLayout), vec!["Scope", "Full", "Split", "Four"]);
         u.select_option(Item::WinLayout, "Full");
         render(&mut u);
-        assert!(u.full && u.wins.len() == 1 && u.grid.y == 0);
+        assert!(u.full.on && u.plot.wins.len() == 1 && u.grid.y == 0);
         u.select_option(Item::WinLayout, "Split");
         render(&mut u);
-        assert!(!u.full && u.wins.len() == 2 && u.wins[1].y > u.wins[0].y && u.wins[0].x == u.wins[1].x);
+        assert!(
+            !u.full.on
+                && u.plot.wins.len() == 2
+                && u.plot.wins[1].y > u.plot.wins[0].y
+                && u.plot.wins[0].x == u.plot.wins[1].x
+        );
         assert_eq!(u.value(Item::PaneSel), "Traces");
         u.select_option(Item::PaneSel, "Results");
         render(&mut u);
         assert_eq!(
-            (u.wins.len(), u.m.win_layout, u.m.pane, u.m.split_pane, u.m.density),
+            (u.plot.wins.len(), u.m.win_layout, u.m.pane, u.m.split_pane, u.m.density),
             (1, WinLayout::One, tables::PANE_RESULTS, tables::PANE_RESULTS, Density::Split)
         );
         assert!(u.pane_h() > 0);
@@ -449,16 +470,16 @@ mod tests {
         assert_eq!(u.m.pane, tables::PANE_TREND);
         u.select_option(Item::WinLayout, "Four");
         render(&mut u);
-        assert_eq!(u.wins.len(), 4);
+        assert_eq!(u.plot.wins.len(), 4);
         assert_eq!(u.pane_h(), 0);
         u.select_option(Item::WinLayout, "Scope");
         render(&mut u);
-        assert_eq!((u.wins.len(), u.pane_h()), (1, 0));
+        assert_eq!((u.plot.wins.len(), u.pane_h()), (1, 0));
         // Split comes back to the lower pane it had
         u.select_option(Item::WinLayout, "Split");
         render(&mut u);
         assert_eq!(u.value(Item::PaneSel), "Trend");
-        assert_eq!(u.wins.len(), 1);
+        assert_eq!(u.plot.wins.len(), 1);
         assert!(u.pane_h() > 0);
     }
 
@@ -477,13 +498,13 @@ mod tests {
         let mut cv = Canvas::new(W, H);
         u.render(&mut cv);
         assert_eq!(u.m.density, Density::Full);
-        assert!(!u.full && u.grid == normal, "the panel stays the controls");
+        assert!(!u.full.on && u.grid == normal, "the panel stays the controls");
         u.select_option(Item::Hdmi, "Mirror");
         u.render(&mut cv);
-        assert!(u.full && u.grid.y == 0, "mirror shows Full on the panel");
+        assert!(u.full.on && u.grid.y == 0, "mirror shows Full on the panel");
         u.select_option(Item::Hdmi, "Waveform");
         u.render(&mut cv);
-        assert!(!u.full && u.grid == normal, "waveform gives the panel its bars back");
+        assert!(!u.full.on && u.grid == normal, "waveform gives the panel its bars back");
         let (head, _) = u.results_rects().unwrap();
         let at = (head.y * W + head.x + 8) as usize;
         let snap_at = ((head.y - TOP.h) * W + head.x + 8) as usize;
@@ -494,13 +515,13 @@ mod tests {
         assert_eq!(u.hdmi.snap[snap_at], cv.px[at], "Scope copies the plot, strip and card");
         u.select_option(Item::WinLayout, "Four");
         u.render(&mut cv);
-        assert_eq!(u.wins.len(), 4);
-        assert!(u.wins.iter().all(|w| w.y >= TOP.h && w.y + w.h <= u.frame().bottom.y));
-        assert!(!u.full);
+        assert_eq!(u.plot.wins.len(), 4);
+        assert!(u.plot.wins.iter().all(|w| w.y >= TOP.h && w.y + w.h <= u.frame().bottom.y));
+        assert!(!u.full.on);
         u.select_option(Item::WinLayout, "Split");
         u.select_option(Item::PaneSel, "Results");
         u.render(&mut cv);
-        assert!(u.pane_h() > 0 && u.wins.len() == 1 && !u.full);
+        assert!(u.pane_h() > 0 && u.plot.wins.len() == 1 && !u.full.on);
         let pane = u.pane_rect();
         assert!(pane.y >= TOP.h && pane.y + pane.h <= u.frame().bottom.y);
     }
@@ -512,7 +533,7 @@ mod tests {
         u.spread_wins();
         u.m.active = 0;
         render(&mut u);
-        let b = u.wins[1];
+        let b = u.plot.wins[1];
         // CH2's marker at the left edge of the right window
         let y = u.y_of_volts(1, 0.0);
         let x = b.x + 10;
@@ -592,7 +613,7 @@ mod tests {
         assert_eq!(u.m.la_win, 0);
         render(&mut u);
         let (band, pitch) = u.la_band(u.m.la.lines().len());
-        let w = u.wins[0];
+        let w = u.plot.wins[0];
         // at the bottom of the window, half of it or what 16 lanes of the smallest pitch need
         let n = u.m.la.lines().len() as i32;
         assert!(
@@ -610,7 +631,7 @@ mod tests {
         u.m.la_win = 3;
         render(&mut u);
         let (band, _) = u.la_band(u.m.la.lines().len());
-        let w = u.wins[3];
+        let w = u.plot.wins[3];
         assert!(band.h > w.h * 3 / 4 && band.y >= w.y, "{:?} {:?}", band, w);
     }
 
@@ -632,7 +653,7 @@ mod tests {
         ] {
             u.m.win_layout = l;
             u.spread_wins();
-            u.full = full;
+            u.full.on = full;
             for _ in 0..10 {
                 u.step(0.05);
             }
@@ -644,7 +665,7 @@ mod tests {
         u.m.ch[3].on = false;
         u.m.win_layout = WinLayout::Quad;
         u.spread_wins();
-        u.full = false;
+        u.full.on = false;
         for _ in 0..10 {
             u.step(0.05);
         }
@@ -662,7 +683,7 @@ mod tests {
         u.m.win_layout = WinLayout::One;
         u.spread_wins();
         u.stats_on = true;
-        u.full = false;
+        u.full.on = false;
         for _ in 0..12 {
             u.step(0.05);
         }

@@ -278,7 +278,7 @@ mod tests {
         ui.m.delay = 0.0;
         ui.workspace.stacked = true;
         ui.relayout();
-        ui.cur_win = 1;
+        ui.plot.cur_win = 1;
         let a = reference(-250e-9, true).v;
         let b: Vec<f32> = (0..a.len()).map(|i| a[i.saturating_sub(3)]).collect();
         ui.last[0] = Some(Record {

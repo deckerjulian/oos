@@ -635,7 +635,7 @@ fn cphy_eye_full_screen_shot() {
     let dt = f64::from_le_bytes(b[478..486].try_into().unwrap());
     let t0 = f64::from_le_bytes(b[486..494].try_into().unwrap());
     u.refs[3] = Some(RefWave { color: 3, label: "CLK".into(), vpd: 0.5, ..RefWave::test(v, dt, t0) });
-    u.full = true;
+    u.full.on = true;
     u.relayout();
     u.m.view = AView::Eye;
     u.m.eye_src = WaveId::Ref(0);

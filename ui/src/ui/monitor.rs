@@ -59,11 +59,11 @@ impl Ui {
         // the monitor's top bar marks its own view; the panel's notes stay on the panel
         self.m.view_cur = j;
         let toast = self.toast.take();
-        let keep = (self.xy, self.full, self.stats_on);
-        (self.xy, self.full, self.stats_on) = (xy, full, stats);
+        let keep = (self.xy, self.full.on, self.stats_on);
+        (self.xy, self.full.on, self.stats_on) = (xy, full, stats);
         let r = f(self);
         self.m = panel;
-        (self.xy, self.full, self.stats_on) = keep;
+        (self.xy, self.full.on, self.stats_on) = keep;
         self.toast = toast;
         Some(r)
     }

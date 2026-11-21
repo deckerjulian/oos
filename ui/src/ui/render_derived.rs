@@ -396,7 +396,7 @@ impl Ui {
     pub(super) fn draw_math(&self, cv: &mut Canvas) {
         // all traces first, then the labels on top of them
         let on: Vec<usize> = (0..NMATH)
-            .filter(|&k| self.m.math_ch(k).op != MathOp::Off && self.math_win_of(k) == self.cur_win)
+            .filter(|&k| self.m.math_ch(k).op != MathOp::Off && self.math_win_of(k) == self.plot.cur_win)
             .collect();
         let labels: Vec<Option<String>> =
             on.iter().enumerate().map(|(row, &k)| self.draw_math_ch(cv, k, row as i32)).collect();
@@ -423,7 +423,7 @@ impl Ui {
         let f = self.fonts();
         // the last stacked lane keeps its time labels clear: the trace is clipped above them
         let mut lane = self.area;
-        if self.stacked() && self.cur_win + 1 == self.wins.len() {
+        if self.stacked() && self.plot.cur_win + 1 == self.plot.wins.len() {
             lane.h = (lane.h - (f.s.size + 8)).max(f.s.size);
         }
         cv.set_clip(lane);
@@ -600,7 +600,7 @@ impl Ui {
             if row.is_some() {
                 lane += 1;
             }
-            if win.unwrap_or(self.la_win_of()) != self.cur_win {
+            if win.unwrap_or(self.la_win_of()) != self.plot.cur_win {
                 continue;
             }
             let y = match row {

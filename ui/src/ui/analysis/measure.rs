@@ -9,6 +9,17 @@ use super::*;
 
 pub(super) const BACKGROUND_MEASUREMENT_POINTS: usize = 262_144;
 
+/// The measurements of the last record and of the references (ADR 0062).
+#[derive(Default)]
+pub(in crate::ui) struct Measured {
+    /// per channel (oos-dsp), of the last record
+    pub ch: [Arc<oos_dsp::measure::Analysis>; NCH],
+    /// of each ref slot, from the stored samples (no front-end bandwidth)
+    pub refs: [Arc<oos_dsp::measure::Analysis>; NREF],
+    /// false when a hidden, unrequested reference skipped the capture-time scan
+    pub refs_valid: [bool; NREF],
+}
+
 /// A reference may keep the same allocation between accepted SIM captures.
 /// Include its revision as well as the physical gate and analysis settings.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -488,7 +499,7 @@ impl Ui {
             if analysis.is_none()
                 && self.m.ch[channel].on
                 && self.computing_like_last(channel)
-                && self.ana[channel].valid
+                && self.measured.ch[channel].valid
             {
                 continue;
             }
@@ -514,7 +525,7 @@ impl Ui {
                     })
                 })
                 .unwrap_or_default();
-            self.ana[channel] = analysis.unwrap_or_default();
+            self.measured.ch[channel] = analysis.unwrap_or_default();
             if !self.m.ch[channel].on {
                 *self.azr.ch_measure[channel].borrow_mut() = None;
                 self.azr.ch_measure_pending[channel].set(None);
@@ -696,8 +707,8 @@ impl Ui {
                 || self.m.meas2.iter().any(|entry| entry.1 == id || entry.2 == id)
                 || meter == Some(i);
             let analysis = requested.then(|| self.reference_measurement(i)).flatten();
-            self.ref_ana_valid[i] = analysis.is_some();
-            self.ref_ana[i] = analysis.map_or_else(Default::default, |(a, _)| a);
+            self.measured.refs_valid[i] = analysis.is_some();
+            self.measured.refs[i] = analysis.map_or_else(Default::default, |(a, _)| a);
             if self.refs[i].is_none() {
                 *self.azr.ref_measure[i].borrow_mut() = None;
             }

@@ -739,16 +739,10 @@ pub struct Ui {
     grid: Rect,
     /// the zoom window: its vertical magnification, the time base it opened on, how it was closed (plot_layout.rs)
     zoom_view: plot_layout::ZoomView,
-    /// the waveform windows in the plot (one: the plot itself); `area` is the first while nothing else is drawn
-    wins: Vec<Rect>,
-    /// the window being drawn
-    cur_win: usize,
-    /// Full density on the panel: the plot covers the top bar and the cards. Stays off while the external display
-    /// shows the waveform, so the panel keeps the controls, unless the expand button asked for it (`full_asked`).
-    full: bool,
-    /// Full came from a tap on the expand button: the panel enlarges its plot even while the external display shows
-    /// the waveform. Full chosen under Density, a display plugged in, or leaving Full clears it.
-    full_asked: bool,
+    /// the waveform windows in the plot, the one being drawn, the pass of the second picture (plot_layout.rs)
+    plot: plot_layout::Plot,
+    /// Full density on the panel, and whether the expand button asked for it (windows.rs)
+    full: windows::Full,
     rng: Rng,
     trace_bus: std::cell::RefCell<bus::Cache>,
     menu: MenuId,
@@ -767,18 +761,10 @@ pub struct Ui {
     history: records::History,
     /// mark all trigger events in the record (search)
     search_on: bool,
-    /// measurements per channel (oos-dsp) of the last record
-    ana: [std::sync::Arc<oos_dsp::measure::Analysis>; NCH],
-    /// measurements of each ref slot, from the stored samples (no front-end bandwidth)
-    ref_ana: [std::sync::Arc<oos_dsp::measure::Analysis>; NREF],
-    /// False when a hidden, unrequested reference skipped the capture-time scan.
-    ref_ana_valid: [bool; NREF],
+    /// the measurements (oos-dsp) of the last record per channel and of each ref slot (analysis/measure.rs)
+    measured: analysis::Measured,
     /// the measurements in the background (records.rs)
     meas_bg: records::MeasBackground,
-    /// counts what makes a background result still out wrong (a clear, a measurement made here at once), a result
-    /// sent before is dropped; a new record does not count (in Run one comes nearly every frame, and every result
-    /// would be dropped). The setup files and SCPI count it too
-    meas_n: u64,
     /// what choosing the Bus trigger switched on by itself (`set_trig_type`): the channels and whether the decoder; leaving
     /// Bus switches exactly those off again, what the user had on stays
     bus_auto: Option<([bool; NCH], bool)>,
@@ -819,10 +805,8 @@ pub struct Ui {
     offline: offline::Mode,
     /// Take over, offline waveforms, or the live scope.
     look: reflook::RefLook,
-    /// Settings of each added measurement. Missing keys follow the shared measure menu.
-    meas_own: std::collections::HashMap<(Meas, WaveId), reflook::MeasOwn>,
-    /// Settings dialog open on this index of `m.meas`.
-    meas_cfg: Option<u16>,
+    /// the settings of each added measurement, and the row whose settings dialog is open (reflook.rs)
+    meas_own: reflook::OwnMeas,
     /// the external display: whether one is attached, its size, and the waveform copied for it (windows.rs)
     pub hdmi: windows::Hdmi,
     /// the start-up screen and the last start-up's result for About (startup.rs)
@@ -897,8 +881,6 @@ pub struct Ui {
     capture_views: std::cell::RefCell<capture_memory::State>,
     /// the screen the layout is made for: the panel, or another size in host test runs (`--size`)
     pub scr: Screen,
-    /// `render_view` is drawing the second picture: the layout must not touch the phosphor maps
-    view_pass: bool,
     /// the USB stick: whether one is mounted, and when the sticks are looked for next (save_recall.rs)
     stick: save_recall::Stick,
     /// the logic analyser: the probe as last read, the pixel columns of the last LA record drawn (la.rs)
@@ -969,8 +951,8 @@ impl Ui {
         self.cleared = true;
         self.stats = [Stats::default(); NCH];
         // a measurement still out, or a record waiting for the worker, belongs to what was cleared away
-        (self.meas_n, self.meas_bg.want, self.meas_bg.pending) = (self.meas_n + 1, false, None);
-        self.ana = Default::default();
+        (self.meas_bg.n, self.meas_bg.want, self.meas_bg.pending) = (self.meas_bg.n + 1, false, None);
+        self.measured.ch = Default::default();
         self.clear_measurement_statistics();
         self.mask_counts_reset();
         (self.zone_trig.drops, self.zone_trig.clear) = (0, self.zone_trig.clear + 1);

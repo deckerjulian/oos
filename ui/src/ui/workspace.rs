@@ -83,14 +83,14 @@ mod tests {
         ui.trace_mode(true);
         assert!(ui.stacked() && ui.m.zoom);
         assert_eq!((ui.m.tscale, ui.m.delay, ui.m.zscale, ui.m.zdelay), before);
-        assert_eq!(ui.wins.len(), ui.trace_sources().len());
+        assert_eq!(ui.plot.wins.len(), ui.trace_sources().len());
         let (overview, detail) = Ui::split_zoom(ui.grid);
-        for &lane in &ui.wins {
+        for &lane in &ui.plot.wins {
             assert_eq!((lane.x, lane.w), (detail.x, detail.w));
             assert!(lane.y >= detail.y && lane.y + lane.h <= detail.y + detail.h);
             assert!(lane.h > 0 && lane.y >= overview.y + overview.h);
         }
-        assert_eq!((ui.phz.w, ui.phz.h), (ui.wins[0].w as usize, ui.wins[0].h as usize));
+        assert_eq!((ui.phz.w, ui.phz.h), (ui.plot.wins[0].w as usize, ui.plot.wins[0].h as usize));
         assert_ne!(ui.source_area(WaveId::Ref(0)), ui.source_area(WaveId::Ref(1)));
         let mut cv = Canvas::new(W, H);
         ui.render(&mut cv);
@@ -104,7 +104,7 @@ mod tests {
         ui.trace_mode(false);
         assert!(ui.m.zoom && !ui.stacked());
         assert_eq!((ui.m.tscale, ui.m.delay, ui.m.zscale, ui.m.zdelay), before);
-        assert_eq!(ui.wins, vec![Ui::split_zoom(ui.grid).1]);
+        assert_eq!(ui.plot.wins, vec![Ui::split_zoom(ui.grid).1]);
         ui.render(&mut cv);
     }
 
@@ -203,7 +203,7 @@ mod tests {
         let mut ui = mixed();
         ui.set_zoom(true);
         ui.trace_mode(true);
-        let lane = ui.wins[1];
+        let lane = ui.plot.wins[1];
         let (x, y) = (lane.x + lane.w / 2, lane.y + lane.h / 2);
         let before = ui.m.zdelay;
         ui.touch_ev(Phase::Down, x, y);
@@ -507,13 +507,13 @@ mod tests {
                 ui.m.cur_d = 0.75;
                 let mut cv = Canvas::new(W, H);
                 cv.clear(BG);
-                for index in 0..ui.wins.len() {
-                    ui.cur_win = index;
-                    ui.area = ui.wins[index];
+                for index in 0..ui.plot.wins.len() {
+                    ui.plot.cur_win = index;
+                    ui.area = ui.plot.wins[index];
                     ui.draw_cursors(&mut cv);
                 }
                 let selected = ui.source_area(WaveId::Ref(1)).unwrap();
-                for &area in &ui.wins {
+                for &area in &ui.plot.wins {
                     let marked = (area.y..area.y + area.h).any(|y| {
                         cv.px[(y * W + area.x) as usize..(y * W + area.x + area.w) as usize].contains(&CURSOR)
                     });
@@ -675,7 +675,7 @@ impl Ui {
             WaveId::Ch(c) => self.m.ch[c].on && self.shows(c),
             WaveId::Ref(i) => {
                 self.refs.get(i).and_then(Option::as_ref).is_some_and(|r| r.on)
-                    && (!self.stacked() || self.trace_sources().get(self.cur_win) == Some(&Trace::Reference(i)))
+                    && (!self.stacked() || self.trace_sources().get(self.plot.cur_win) == Some(&Trace::Reference(i)))
             }
         }
     }
@@ -744,8 +744,8 @@ impl Ui {
     pub(super) fn source_area(&self, id: WaveId) -> Option<Rect> {
         if !self.stacked() {
             if let WaveId::Ref(i) = id {
-                if self.wins.len() > 1 {
-                    return self.wins.get(self.ref_win_of(i)).copied();
+                if self.plot.wins.len() > 1 {
+                    return self.plot.wins.get(self.ref_win_of(i)).copied();
                 }
             }
             return Some(self.wave_area());
@@ -755,11 +755,11 @@ impl Ui {
             WaveId::Ref(i) => Trace::Reference(i),
         };
         let index = self.trace_sources().iter().position(|source| *source == wanted)?;
-        self.wins.get(index).copied()
+        self.plot.wins.get(index).copied()
     }
     pub(super) fn drag_reference(&self) -> Option<usize> {
         if self.stacked() {
-            return match self.trace_sources().get(self.cur_win) {
+            return match self.trace_sources().get(self.plot.cur_win) {
                 Some(Trace::Reference(i)) => Some(*i),
                 _ => None,
             };

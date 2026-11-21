@@ -18,6 +18,17 @@ pub(super) struct ZoomBox {
     pub map: Option<(Rect, f32, f32)>,
 }
 
+/// The windows of the plot as the layout made them (ADR 0062).
+#[derive(Default)]
+pub(super) struct Plot {
+    /// the waveform windows in the plot (one: the plot itself); `area` is the first while nothing else is drawn
+    pub wins: Vec<Rect>,
+    /// the window being drawn
+    pub cur_win: usize,
+    /// `render_view` is drawing the second picture: the layout must not touch the phosphor maps
+    pub view_pass: bool,
+}
+
 /// The zoom window's display (ADR 0062).
 pub(super) struct ZoomView {
     /// whether the windows were laid out with the zoom window open
@@ -185,7 +196,7 @@ impl Ui {
     /// Full density drawn on the panel. Not while the external display shows the waveform (the panel stays the
     /// controls) unless the expand button asked for it, and not with the touch lock, whose way out is the Menu button.
     pub(super) fn full_on(&self) -> bool {
-        self.full && !self.m.touch_lock
+        self.full.on && !self.m.touch_lock
     }
 
     pub(super) fn plot_top(&self) -> i32 {
@@ -254,7 +265,7 @@ impl Ui {
                 .position(|source| *source == workspace::Trace::Channel(c))
                 .unwrap_or(usize::MAX);
         }
-        self.m.ch_win[c].min(self.wins.len().max(1) - 1)
+        self.m.ch_win[c].min(self.plot.wins.len().max(1) - 1)
     }
 
     /// Window of reference `i` in a split: its Windows row; in Stacked its own row.
@@ -266,7 +277,7 @@ impl Ui {
                 .position(|source| *source == workspace::Trace::Reference(i))
                 .unwrap_or(usize::MAX);
         }
-        self.m.ref_win[i].min(self.wins.len().max(1) - 1)
+        self.m.ref_win[i].min(self.plot.wins.len().max(1) - 1)
     }
 
     pub(super) fn math_win_of(&self, k: usize) -> usize {
@@ -277,18 +288,18 @@ impl Ui {
                 .position(|source| *source == workspace::Trace::Math(k))
                 .unwrap_or(usize::MAX);
         }
-        self.m.math_win[k].min(self.wins.len().max(1) - 1)
+        self.m.math_win[k].min(self.plot.wins.len().max(1) - 1)
     }
 
     /// Whether channel `c` belongs to the window being drawn.
     pub(super) fn shows(&self, c: usize) -> bool {
-        self.win_of(c) == self.cur_win
+        self.win_of(c) == self.plot.cur_win
     }
 
     /// The rectangle channel `c` is drawn in: its window, or the main waveform area (zoom).
     pub(super) fn ch_area(&self, c: usize) -> Rect {
-        if self.wins.len() > 1 {
-            self.wins.get(self.win_of(c)).copied().unwrap_or(self.area)
+        if self.plot.wins.len() > 1 {
+            self.plot.wins.get(self.win_of(c)).copied().unwrap_or(self.area)
         } else {
             self.area
         }
@@ -296,13 +307,13 @@ impl Ui {
 
     /// Window of the LA lanes.
     pub(super) fn la_win_of(&self) -> usize {
-        self.m.la_win.min(self.wins.len().max(1) - 1)
+        self.m.la_win.min(self.plot.wins.len().max(1) - 1)
     }
 
     /// Area whose time axis the LA lanes and the decoders on them use: the window of the LA, or the main area.
     pub(super) fn lane_area(&self) -> Rect {
-        if self.wins.len() > 1 {
-            self.wins[self.la_win_of()]
+        if self.plot.wins.len() > 1 {
+            self.plot.wins[self.la_win_of()]
         } else {
             self.area
         }
@@ -323,15 +334,15 @@ impl Ui {
         if let Some(WaveId::Ref(i)) = decode_wave(m.dec_src) {
             return self
                 .source_area(WaveId::Ref(i))
-                .and_then(|area| self.wins.iter().position(|r| *r == area))
+                .and_then(|area| self.plot.wins.iter().position(|r| *r == area))
                 .or(Some(0));
         }
-        Some(if self.wins.len() > 1 { self.win_of(m.dec_src) } else { 0 })
+        Some(if self.plot.wins.len() > 1 { self.win_of(m.dec_src) } else { 0 })
     }
 
     /// Area for cards over the plot (tables, results): the whole plot when it is split.
     pub(super) fn over_area(&self) -> Rect {
-        if self.wins.len() > 1 {
+        if self.plot.wins.len() > 1 {
             self.grid
         } else {
             self.area
@@ -488,7 +499,7 @@ impl Ui {
                 return Some((o, self.m.time_per_div(), self.m.delay));
             }
             if z.contains(x, y) {
-                let lane = self.wins.iter().copied().find(|lane| lane.contains(x, y)).unwrap_or(z);
+                let lane = self.plot.wins.iter().copied().find(|lane| lane.contains(x, y)).unwrap_or(z);
                 return Some((lane, tscales()[self.m.zscale], self.m.zdelay));
             }
             return None;
@@ -586,7 +597,7 @@ impl Ui {
         {
             return false;
         }
-        let lane = self.wins.iter().position(|area| area.contains(x, y));
+        let lane = self.plot.wins.iter().position(|area| area.contains(x, y));
         // the lane of the zoomed window the wheel is over
         let detail_lane = lane.filter(|_| self.m.zoom);
         let detail = detail_lane.is_some();
@@ -603,11 +614,11 @@ impl Ui {
         let steps = steps.clamp(-32, 32);
         if zoom_time {
             let area = if let Some(l) = detail_lane {
-                self.wins[l]
+                self.plot.wins[l]
             } else if self.m.zoom {
                 Self::split_zoom(self.grid).0
             } else {
-                lane.map(|index| self.wins[index]).unwrap_or(self.area)
+                lane.map(|index| self.plot.wins[index]).unwrap_or(self.area)
             };
             let fraction = ((x - area.x) as f32 / area.w.max(1) as f32).clamp(0.0, 1.0);
             for _ in 0..steps.unsigned_abs() {
@@ -619,7 +630,7 @@ impl Ui {
             }
         } else if vertical {
             if let Some(l) = detail_lane {
-                let area = self.wins[l];
+                let area = self.plot.wins[l];
                 let fraction = (y - area.y) as f32 / area.h.max(1) as f32;
                 for _ in 0..steps.unsigned_abs() {
                     self.zoom_vertical_step(steps.signum(), area, fraction);
@@ -684,7 +695,7 @@ impl Ui {
 
     /// The main waveform area (the zoomed view when zoom is on, the first window when the plot is split).
     pub(super) fn wave_area(&self) -> Rect {
-        self.wins.first().copied().unwrap_or(self.grid)
+        self.plot.wins.first().copied().unwrap_or(self.grid)
     }
 
     /// Recomputes the layout and reallocates the phosphor maps when the plot size changed.
@@ -695,10 +706,10 @@ impl Ui {
         let detail = if self.m.zoom { Self::split_zoom(g).1 } else { g };
         let wins = self.split_wins(detail);
         let w0 = wins[0];
-        if self.view_pass {
+        if self.plot.view_pass {
             // the second picture (HDMI layout): rectangles of its own, the maps of the panel
             self.grid = g;
-        } else if g != self.grid || self.zoom_view.laid_out != self.m.zoom || self.wins.first() != Some(&w0) {
+        } else if g != self.grid || self.zoom_view.laid_out != self.m.zoom || self.plot.wins.first() != Some(&w0) {
             self.grid = g;
             self.zoom_view.laid_out = self.m.zoom;
             if self.m.zoom {
@@ -712,8 +723,8 @@ impl Ui {
             }
             self.dirty_map = true;
         }
-        self.wins = wins;
-        self.cur_win = 0;
+        self.plot.wins = wins;
+        self.plot.cur_win = 0;
         self.area = self.wave_area();
     }
 

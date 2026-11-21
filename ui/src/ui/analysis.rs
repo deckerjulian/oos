@@ -26,7 +26,7 @@ mod update;
 
 pub(in crate::ui) use draw::{PowerPage, SpectrumPage};
 use measure::*;
-pub(in crate::ui) use measure::{analyze_samples, RefMeasureKey};
+pub(in crate::ui) use measure::{analyze_samples, Measured, RefMeasureKey};
 
 #[cfg(test)]
 #[path = "channel_measurement_tests.rs"]

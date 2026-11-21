@@ -380,7 +380,7 @@ impl Ui {
     /// The lane strip under the graticule: (rectangle, lane pitch) for `n` lanes. In a split plot the lanes stand at
     /// the bottom of their window: over its lower half while a channel shares the window, all of it when not.
     pub(super) fn la_band(&self, n: usize) -> (Rect, i32) {
-        if self.wins.len() > 1 {
+        if self.plot.wins.len() > 1 {
             let w = self.lane_area();
             let shared = self.win_has_analog(self.la_win_of());
             // the time labels of the window stay readable under the lanes

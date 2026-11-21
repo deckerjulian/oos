@@ -22,6 +22,10 @@ pub(super) struct MeasBackground {
     /// the record a background measurement is wanted of (`want`), when it must not be the newest at the time the
     /// worker is free: with raw deep reads (deepmeas.rs) the newest is then often a pair record, held
     pub pending: Option<Record>,
+    /// counts what makes a background result still out wrong (a clear, a measurement made here at once), a result
+    /// sent before is dropped; a new record does not count (in Run one comes nearly every frame, and every result
+    /// would be dropped). The setup files and SCPI count it too
+    pub n: u64,
 }
 
 /// History playback (ADR 0062): the last acquired records, newest last, and the one viewed. At most `HISTORY` records,
@@ -122,7 +126,7 @@ impl Ui {
         if self.meas_bg.env[c] && crate::framestats::needs_samples(k) {
             f64::NAN
         } else {
-            self.ana[c].get(k)
+            self.measured.ch[c].get(k)
         }
     }
 
@@ -369,7 +373,7 @@ impl Ui {
         let done = measure_channels(&work);
         self.meas_bg.env_sent = std::array::from_fn(|c| self.meas_on_pairs(rec, c));
         self.meas_set(done);
-        self.meas_n += 1;
+        self.meas_bg.n += 1;
         self.meas_bg.want = false;
     }
 
@@ -416,10 +420,10 @@ impl Ui {
     fn meas_set(&mut self, done: Vec<(usize, Stats, oos_dsp::measure::Analysis)>) {
         self.meas_bg.env = self.meas_bg.env_sent;
         for c in 0..NCH {
-            (self.stats[c], self.ana[c]) = (Stats::default(), Default::default());
+            (self.stats[c], self.measured.ch[c]) = (Stats::default(), Default::default());
         }
         for (c, st, an) in done {
-            (self.stats[c], self.ana[c]) = (st, std::sync::Arc::new(an));
+            (self.stats[c], self.measured.ch[c]) = (st, std::sync::Arc::new(an));
         }
     }
 
@@ -433,7 +437,7 @@ impl Ui {
         let Some(w) = self.meas_bg.worker.as_mut() else { return };
         if let Ok((n, done)) = w.rx.try_recv() {
             w.busy = false;
-            if n == self.meas_n {
+            if n == self.meas_bg.n {
                 // of the record shown when it was sent: in Run a few frames old, the newest result there is
                 self.meas_set(done);
                 self.meas_bg.new = true;
@@ -465,7 +469,7 @@ impl Ui {
             })
             .collect();
         let w = self.meas_bg.worker.as_mut().expect("worker");
-        if w.tx.send((self.meas_n, job)).is_ok() {
+        if w.tx.send((self.meas_bg.n, job)).is_ok() {
             w.busy = true;
             self.meas_bg.env_sent = env;
         } else {

@@ -933,11 +933,11 @@ impl Ui {
                 let e = (k, self.meas_src);
                 if let Some(index) = self.m.meas.iter().position(|item| *item == e) {
                     self.m.meas.remove(index);
-                    self.meas_own.remove(&e);
-                    if self.meas_cfg == Some(index as u16) {
-                        self.meas_cfg = None;
-                    } else if self.meas_cfg.is_some_and(|n| n as usize > index) {
-                        self.meas_cfg = self.meas_cfg.map(|n| n - 1);
+                    self.meas_own.rows.remove(&e);
+                    if self.meas_own.dialog == Some(index as u16) {
+                        self.meas_own.dialog = None;
+                    } else if self.meas_own.dialog.is_some_and(|n| n as usize > index) {
+                        self.meas_own.dialog = self.meas_own.dialog.map(|n| n - 1);
                     }
                     self.clear_measurement_statistics();
                     self.toast(&format!(
@@ -998,8 +998,8 @@ impl Ui {
                 self.m.meas.clear();
                 self.m.meas2.clear();
                 self.m.cat.clear();
-                self.meas_own.clear();
-                self.meas_cfg = None;
+                self.meas_own.rows.clear();
+                self.meas_own.dialog = None;
                 self.clear_measurement_statistics();
             }
             Item::RefSave => {

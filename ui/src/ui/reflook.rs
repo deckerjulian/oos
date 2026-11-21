@@ -19,6 +19,15 @@ pub(super) enum RefLook {
     Waves,
 }
 
+/// The settings of the added measurements (ADR 0062).
+#[derive(Default)]
+pub(super) struct OwnMeas {
+    /// the settings of each added measurement; missing keys follow the shared measure menu
+    pub rows: std::collections::HashMap<(Meas, WaveId), MeasOwn>,
+    /// the settings dialog is open on this index of `m.meas`
+    pub dialog: Option<u16>,
+}
+
 /// Settings that belong to one added measurement. Unset fields follow the shared measure menu.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct MeasOwn {
@@ -131,7 +140,7 @@ impl Ui {
     }
 
     pub(super) fn waves_on(&self) -> bool {
-        self.look == RefLook::Waves && !self.view_on() && !self.xy && self.wins.len() <= 1
+        self.look == RefLook::Waves && !self.view_on() && !self.xy && self.plot.wins.len() <= 1
     }
 
     pub(super) fn waves_board_rect(&self) -> Option<Rect> {
@@ -166,7 +175,7 @@ impl Ui {
     /// A set cell inherits the first added row of this kind unless it has its own row.
     pub(super) fn set_cell(&self, kind: Meas, slot: usize) -> f64 {
         let id = WaveId::Ref(slot);
-        let owner = if self.meas_own.contains_key(&(kind, id)) || self.m.meas.contains(&(kind, id)) {
+        let owner = if self.meas_own.rows.contains_key(&(kind, id)) || self.m.meas.contains(&(kind, id)) {
             id
         } else {
             let Some(&(_, source)) = self.m.meas.iter().find(|e| e.0 == kind) else { return f64::NAN };
@@ -420,21 +429,21 @@ impl Ui {
     pub(super) fn ensure_meas_own(&mut self) {
         let fresh = MeasOwn::shared(&self.m);
         for &(k, id) in &self.m.meas.clone() {
-            self.meas_own.entry((k, id)).or_insert(fresh);
+            self.meas_own.rows.entry((k, id)).or_insert(fresh);
         }
     }
 
     pub(super) fn open_meas_cfg(&mut self, index: usize) {
         if index >= self.m.meas.len() {
-            self.meas_cfg = None;
+            self.meas_own.dialog = None;
             return;
         }
         self.ensure_meas_own();
-        self.meas_cfg = Some(index as u16);
+        self.meas_own.dialog = Some(index as u16);
     }
 
     pub(super) fn cfg_geom(&self) -> Option<CfgGeom> {
-        let index = self.meas_cfg? as usize;
+        let index = self.meas_own.dialog? as usize;
         let (k, _) = *self.m.meas.get(index)?;
         let extras = match k {
             Meas::Rise | Meas::Fall => 1,
@@ -493,10 +502,10 @@ impl Ui {
     }
 
     pub(super) fn draw_meas_cfg(&self, cv: &mut Canvas) {
-        let (Some(g), Some(index)) = (self.cfg_geom(), self.meas_cfg) else { return };
+        let (Some(g), Some(index)) = (self.cfg_geom(), self.meas_own.dialog) else { return };
         let index = index as usize;
         let Some(&(k, id)) = self.m.meas.get(index) else { return };
-        let own = self.meas_own.get(&(k, id)).copied().unwrap_or_else(|| MeasOwn::shared(&self.m));
+        let own = self.meas_own.rows.get(&(k, id)).copied().unwrap_or_else(|| MeasOwn::shared(&self.m));
         let f = &self.fonts();
         cv.framed(g.panel, 8, 2, ACCENT, 7, DLG_BG);
         cv.text(&f.mb, g.panel.x + 16, g.panel.y + 26, &format!("{} settings", k.name()), TEXT);
@@ -573,11 +582,11 @@ impl Ui {
     pub(super) fn meas_cfg_tap(&mut self, x: i32, y: i32) -> bool {
         let Some(g) = self.cfg_geom() else { return false };
         if !g.panel.contains(x, y) {
-            self.meas_cfg = None;
+            self.meas_own.dialog = None;
             return true;
         }
         if g.close.contains(x, y) {
-            self.meas_cfg = None;
+            self.meas_own.dialog = None;
             return true;
         }
         if g.source_m.contains(x, y) {
@@ -603,7 +612,7 @@ impl Ui {
     }
 
     fn cfg_entry(&mut self) -> Option<(usize, Meas, WaveId)> {
-        let index = self.meas_cfg? as usize;
+        let index = self.meas_own.dialog? as usize;
         let (k, id) = *self.m.meas.get(index)?;
         self.ensure_meas_own();
         Some((index, k, id))
@@ -621,10 +630,10 @@ impl Ui {
             self.toast("That measurement is already on this source");
             return;
         }
-        let own = self.meas_own.remove(&(k, id));
+        let own = self.meas_own.rows.remove(&(k, id));
         self.m.meas[index].1 = next;
         if let Some(own) = own {
-            self.meas_own.insert((k, next), own);
+            self.meas_own.rows.insert((k, next), own);
         }
         self.clear_measurement_statistics();
     }
@@ -649,7 +658,7 @@ impl Ui {
         }
         self.ensure_meas_own();
         let (k, id) = self.m.meas[index];
-        if let Some(own) = self.meas_own.get_mut(&(k, id)) {
+        if let Some(own) = self.meas_own.rows.get_mut(&(k, id)) {
             own.low = low;
             own.high = high;
             own.refs_set = true;
@@ -659,10 +668,10 @@ impl Ui {
 
     fn meas_cfg_refs(&mut self) {
         let Some((_, k, id)) = self.cfg_entry() else { return };
-        let cur = self.meas_own.get(&(k, id)).copied().unwrap_or_else(|| MeasOwn::shared(&self.m));
+        let cur = self.meas_own.rows.get(&(k, id)).copied().unwrap_or_else(|| MeasOwn::shared(&self.m));
         let low = if cur.refs_set { cur.low } else { self.m.meas_lpct };
         let (low, high) = if low < 0.15 { (0.2, 0.8) } else { (0.1, 0.9) };
-        if let Some(own) = self.meas_own.get_mut(&(k, id)) {
+        if let Some(own) = self.meas_own.rows.get_mut(&(k, id)) {
             own.low = low;
             own.high = high;
             own.refs_set = true;
@@ -674,11 +683,12 @@ impl Ui {
         let Some((_, k, id)) = self.cfg_entry() else { return };
         let cur = self
             .meas_own
+            .rows
             .get(&(k, id))
             .map(|o| if o.idle_set { o.idle } else { self.m.meas_idle })
             .unwrap_or(self.m.meas_idle);
         let v = super::tools::time_step(cur, d);
-        if let Some(own) = self.meas_own.get_mut(&(k, id)) {
+        if let Some(own) = self.meas_own.rows.get_mut(&(k, id)) {
             own.idle = v;
             own.idle_set = true;
         }
@@ -690,12 +700,13 @@ impl Ui {
         let all = [oos_dsp::measure::Outside::Above, oos_dsp::measure::Outside::Below, oos_dsp::measure::Outside::Both];
         let cur = self
             .meas_own
+            .rows
             .get(&(k, id))
             .map(|o| if o.side_set { o.side } else { self.m.meas_out })
             .unwrap_or(self.m.meas_out);
         let i = all.iter().position(|&x| x == cur).unwrap_or(2);
         let v = all[(i as i32 + 1).rem_euclid(all.len() as i32) as usize];
-        if let Some(own) = self.meas_own.get_mut(&(k, id)) {
+        if let Some(own) = self.meas_own.rows.get_mut(&(k, id)) {
             own.side = v;
             own.side_set = true;
         }
@@ -704,10 +715,14 @@ impl Ui {
 
     fn meas_cfg_n(&mut self, d: i32) {
         let Some((_, k, id)) = self.cfg_entry() else { return };
-        let cur =
-            self.meas_own.get(&(k, id)).map(|o| if o.n_set { o.n } else { self.m.meas_n }).unwrap_or(self.m.meas_n);
+        let cur = self
+            .meas_own
+            .rows
+            .get(&(k, id))
+            .map(|o| if o.n_set { o.n } else { self.m.meas_n })
+            .unwrap_or(self.m.meas_n);
         let v = (cur as i32 + d).clamp(1, 32) as u32;
-        if let Some(own) = self.meas_own.get_mut(&(k, id)) {
+        if let Some(own) = self.meas_own.rows.get_mut(&(k, id)) {
             own.n = v;
             own.n_set = true;
         }
@@ -718,10 +733,11 @@ impl Ui {
         let Some((_, k, id)) = self.cfg_entry() else { return };
         let cur = self
             .meas_own
+            .rows
             .get(&(k, id))
             .map(|o| if o.data_set { o.data } else { self.m.meas_data })
             .unwrap_or(self.m.meas_data);
-        if let Some(own) = self.meas_own.get_mut(&(k, id)) {
+        if let Some(own) = self.meas_own.rows.get_mut(&(k, id)) {
             own.data = !cur;
             own.data_set = true;
         }
@@ -813,7 +829,7 @@ mod tests {
         put(&mut u, 0, square(1.0), true);
         put(&mut u, 1, square(3.0), true);
         u.m.meas.clear();
-        u.meas_own.clear();
+        u.meas_own.rows.clear();
         u.meas_src = WaveId::Ref(0);
         u.activate(Item::MeasAdd(Meas::Vpp));
         u.set_look(RefLook::Waves);
@@ -846,17 +862,17 @@ mod tests {
     fn every_added_measurement_opens_its_own_settings() {
         let mut u = ui();
         u.m.meas.clear();
-        u.meas_own.clear();
+        u.meas_own.rows.clear();
         u.activate(Item::MeasAdd(Meas::Vpp));
         u.activate(Item::MeasAdd(Meas::Burst));
-        assert!(u.meas_own.contains_key(&(Meas::Vpp, WaveId::Ch(0))));
-        assert!(u.meas_own.contains_key(&(Meas::Burst, WaveId::Ch(0))));
+        assert!(u.meas_own.rows.contains_key(&(Meas::Vpp, WaveId::Ch(0))));
+        assert!(u.meas_own.rows.contains_key(&(Meas::Burst, WaveId::Ch(0))));
         u.key(key::MEASURE);
         let vpp = u.catalog_set_rect(Meas::Vpp).expect("a place to open Vpp settings");
         u.tap(vpp.x + vpp.w / 2, vpp.y + vpp.h / 2);
         let g = u.cfg_geom().expect("Vpp has a settings dialog");
         assert!(g.source_m.w > 0 && g.refs.w > 0 && g.idle_m.is_none());
-        u.meas_cfg = None;
+        u.meas_own.dialog = None;
         let mut opened = false;
         for _ in 0..12 {
             let view = u.catalog_view();
@@ -883,15 +899,15 @@ mod tests {
         let g = u.cfg_geom().expect("Burst has a settings dialog");
         assert!(g.refs.w > 0 && g.idle_m.is_some(), "Burst keeps its own idle");
         u.meas_cfg_tap(g.idle_p.unwrap().x + 4, g.idle_p.unwrap().y + 4);
-        let burst_idle = u.meas_own.get(&(Meas::Burst, WaveId::Ch(0))).unwrap().idle;
-        let vpp_own = u.meas_own.get(&(Meas::Vpp, WaveId::Ch(0))).unwrap();
+        let burst_idle = u.meas_own.rows.get(&(Meas::Burst, WaveId::Ch(0))).unwrap().idle;
+        let vpp_own = u.meas_own.rows.get(&(Meas::Vpp, WaveId::Ch(0))).unwrap();
         assert!(!vpp_own.idle_set);
-        assert!(u.meas_own.get(&(Meas::Burst, WaveId::Ch(0))).unwrap().idle_set);
+        assert!(u.meas_own.rows.get(&(Meas::Burst, WaveId::Ch(0))).unwrap().idle_set);
         assert_ne!(burst_idle, vpp_own.idle);
         // an own idle time above the 5 s of the steps goes down to 5 s, not to off
-        u.meas_own.get_mut(&(Meas::Burst, WaveId::Ch(0))).unwrap().idle = 10.0;
+        u.meas_own.rows.get_mut(&(Meas::Burst, WaveId::Ch(0))).unwrap().idle = 10.0;
         u.meas_cfg_tap(g.idle_m.unwrap().x + 4, g.idle_m.unwrap().y + 4);
-        assert_eq!(u.meas_own.get(&(Meas::Burst, WaveId::Ch(0))).unwrap().idle, 5.0);
+        assert_eq!(u.meas_own.rows.get(&(Meas::Burst, WaveId::Ch(0))).unwrap().idle, 5.0);
     }
 
     #[test]
@@ -900,7 +916,7 @@ mod tests {
         put(&mut u, 0, edge(), true);
         put(&mut u, 1, edge(), true);
         u.m.meas.clear();
-        u.meas_own.clear();
+        u.meas_own.rows.clear();
         u.meas_src = WaveId::Ref(0);
         u.activate(Item::MeasAdd(Meas::Rise));
         u.meas_src = WaveId::Ref(1);

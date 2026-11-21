@@ -859,7 +859,7 @@ mod performance_and_timing_tests {
         let caption = ui.top_acq_caption(room).0;
         assert!(caption.contains("REF") && caption.contains("20.0 Mpts"));
         assert!(ui.fonts().s.width(&caption) <= room);
-        ui.full = true;
+        ui.full.on = true;
         assert!(ui.footer_rects().4.is_some(), "expanded scope keeps Live reachable while its top bar is hidden");
     }
 

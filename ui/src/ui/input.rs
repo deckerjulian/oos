@@ -361,8 +361,8 @@ impl Ui {
         self.bus_auto = None;
         self.clear_measurement_statistics();
         self.select_workspace_source(WaveId::Ch(self.m.active));
-        self.meas_own.clear();
-        self.meas_cfg = None;
+        self.meas_own.rows.clear();
+        self.meas_own.dialog = None;
         self.ensure_meas_own();
         self.stats_on = false;
         self.xy = false;
@@ -628,18 +628,18 @@ impl Ui {
         if self.workspace_touch(ph, x, y) {
             return;
         }
-        if self.wins.len() < 2 {
+        if self.plot.wins.len() < 2 {
             return self.touch_in(ph, x, y);
         }
-        let keep = (self.area, self.cur_win);
+        let keep = (self.area, self.plot.cur_win);
         let w = if ph == Phase::Down {
-            self.wins.iter().position(|r| r.contains(x, y)).unwrap_or(0)
+            self.plot.wins.iter().position(|r| r.contains(x, y)).unwrap_or(0)
         } else {
-            self.touch.win.min(self.wins.len() - 1)
+            self.touch.win.min(self.plot.wins.len() - 1)
         };
-        (self.area, self.cur_win) = (self.wins[w], w);
+        (self.area, self.plot.cur_win) = (self.plot.wins[w], w);
         self.touch_in(ph, x, y);
-        (self.area, self.cur_win) = keep;
+        (self.area, self.plot.cur_win) = keep;
     }
 
     /// One finger's press, move or lift in the area of the current window.
@@ -696,7 +696,7 @@ impl Ui {
             start_delay: sd,
             start_level: self.m.trig_level,
             start_cur: 0.0,
-            win: self.cur_win,
+            win: self.plot.cur_win,
         };
         if self.m.touch_lock || self.dialog.is_some() || self.power.open || self.wlan.osk.is_some() {
             return;
@@ -1181,7 +1181,7 @@ impl Ui {
             cv.text(&self.fonts().s, lx + 4, ly + 14, &format!("Z{}", k + 1), col);
         }
         // the path being drawn is in screen coordinates: once, over the whole plot
-        if self.cur_win != 0 {
+        if self.plot.cur_win != 0 {
             cv.no_clip();
             return;
         }

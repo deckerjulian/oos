@@ -168,7 +168,7 @@ impl Ui {
     fn label_shows(&self, id: WaveId) -> bool {
         match id {
             WaveId::Ch(c) => self.m.ch.get(c).is_some_and(|ch| ch.on) && self.shows(c),
-            WaveId::Ref(i) => self.cur_win == 0 && self.refs.get(i).and_then(|r| r.as_ref()).is_some_and(|r| r.on),
+            WaveId::Ref(i) => self.plot.cur_win == 0 && self.refs.get(i).and_then(|r| r.as_ref()).is_some_and(|r| r.on),
         }
     }
 
